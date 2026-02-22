@@ -51,6 +51,7 @@ export default function ProviderDetailPage() {
       }
     : (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId]);
   const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId];
+  const isWhisk = providerId === 'whisk';
   const models = getModelsByProviderId(providerId);
   const providerAlias = getProviderAlias(providerId);
   
@@ -1045,14 +1046,17 @@ ConnectionRow.propTypes = {
 };
 
 function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthropic, onSave, onClose }) {
-  const [formData, setFormData] = useState({
-    name: "",
-    apiKey: "",
-    priority: 1,
-  });
+  const [formData, setFormData] = useState({ name: "", apiKey: "", priority: 1 });
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  const isWhisk = provider === 'whisk';
+  const title = isWhisk ? `Add Google Whisk Connection` : `Add ${providerName || provider} API Key`;
+  const keyLabel = isWhisk ? "Cookie String" : "API Key";
+  const keyPlaceholder = isWhisk ? "Paste your full cookie string here..." : "Enter your API key...";
+  const keyHint = isWhisk ? "This is the full cookie string from your browser's developer tools." : "";
+  const namePlaceholder = isWhisk ? "My Whisk Account" : "Production Key";
 
   const handleValidate = async () => {
     setValidating(true);
@@ -1064,98 +1068,41 @@ function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthro
       });
       const data = await res.json();
       setValidationResult(data.valid ? "success" : "failed");
-    } catch {
-      setValidationResult("failed");
-    } finally {
-      setValidating(false);
-    }
+    } catch { setValidationResult("failed"); } finally { setValidating(false); }
   };
 
   const handleSubmit = async () => {
     if (!provider || !formData.apiKey) return;
-
     setSaving(true);
     try {
-      let isValid = false;
-      try {
-        setValidating(true);
-        setValidationResult(null);
-        const res = await fetch("/api/providers/validate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: formData.apiKey }),
-        });
-        const data = await res.json();
-        isValid = !!data.valid;
-        setValidationResult(isValid ? "success" : "failed");
-      } catch {
-        setValidationResult("failed");
-      } finally {
-        setValidating(false);
-      }
-
+      const credentials = isWhisk ? { cookie: formData.apiKey } : { apiKey: formData.apiKey };
       await onSave({
         name: formData.name,
-        apiKey: formData.apiKey,
+        credentials,
         priority: formData.priority,
-        testStatus: isValid ? "active" : "unknown",
       });
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   if (!provider) return null;
 
   return (
-    <Modal isOpen={isOpen} title={`Add ${providerName || provider} API Key`} onClose={onClose}>
+    <Modal isOpen={isOpen} title={title} onClose={onClose}>
       <div className="flex flex-col gap-4">
-        <Input
-          label="Name"
-          value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          placeholder="Production Key"
-        />
+        <Input label="Name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder={namePlaceholder} />
         <div className="flex gap-2">
-          <Input
-            label="API Key"
-            type="password"
-            value={formData.apiKey}
-            onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
-            className="flex-1"
-          />
+          <Input label={keyLabel} type="password" value={formData.apiKey} onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })} placeholder={keyPlaceholder} hint={keyHint} className="flex-1" />
           <div className="pt-6">
             <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
               {validating ? "Checking..." : "Check"}
             </Button>
           </div>
         </div>
-        {validationResult && (
-          <Badge variant={validationResult === "success" ? "success" : "error"}>
-            {validationResult === "success" ? "Valid" : "Invalid"}
-          </Badge>
-        )}
-        {isCompatible && (
-          <p className="text-xs text-text-muted">
-            {isAnthropic 
-              ? `Validation checks ${providerName || "Anthropic Compatible"} by verifying the API key.`
-              : `Validation checks ${providerName || "OpenAI Compatible"} via /models on your base URL.`
-            }
-          </p>
-        )}
-        <Input
-          label="Priority"
-          type="number"
-          value={formData.priority}
-          onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })}
-        />
+        {validationResult && <Badge variant={validationResult === "success" ? "success" : "error"}>{validationResult === "success" ? "Valid" : "Invalid"}</Badge>}
+        <Input label="Priority" type="number" value={formData.priority} onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })} />
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={!formData.name || !formData.apiKey || saving}>
-            {saving ? "Saving..." : "Save"}
-          </Button>
-          <Button onClick={onClose} variant="ghost" fullWidth>
-            Cancel
-          </Button>
+          <Button onClick={handleSubmit} fullWidth disabled={!formData.name || !formData.apiKey || saving}>{saving ? "Saving..." : "Save"}</Button>
+          <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
         </div>
       </div>
     </Modal>
