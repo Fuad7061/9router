@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
-    "@rohitaryal/whisk-api": "^1.0.0",
     "@xyflow/react": "^12.10.1",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.6.2",

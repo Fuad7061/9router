@@ -8,12 +8,15 @@ export class WhiskExecutor extends BaseExecutor {
 
   buildUrl(model, stream, urlIndex = 0) {
     // Whisk uses BatchExecute endpoint
-    return this.config.baseUrl;
+    return "https://labs.google.com/_/VisualBlocksService/BatchExecute";
   }
 
   buildHeaders(credentials, stream = false) {
     const headers = {
-      ...this.config.headers
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Origin": "https://labs.google.com",
+      "Referer": "https://labs.google.com/fx/tools/whisk/project"
     };
 
     // Prefer cookie if available, otherwise try to use access token
@@ -28,18 +31,67 @@ export class WhiskExecutor extends BaseExecutor {
   }
 
   /**
+   * Create a Whisk project
+   * @param {object} credentials - Provider credentials
+   * @param {string} projectName - Project name
+   * @returns {Promise<string>} Project ID
+   */
+  async createProject(credentials, projectName = "9Router-Whisk-Project") {
+    const payload = [
+      [
+        ["Iy0Ysb", JSON.stringify([null, projectName]), null, "generic"]
+      ]
+    ];
+
+    const body = `f.req=${encodeURIComponent(JSON.stringify(payload))}`;
+
+    const response = await fetch(this.buildUrl(), {
+      method: "POST",
+      headers: this.buildHeaders(credentials),
+      body: body
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to create Whisk project: ${response.statusText}`);
+    }
+
+    const text = await response.text();
+    return this.extractProjectId(text);
+  }
+
+  /**
+   * Extract project ID from BatchExecute response
+   * @param {string} responseText - Response text
+   * @returns {string} Project ID
+   */
+  extractProjectId(responseText) {
+    try {
+      const lines = responseText.split('\n').filter(line => line.trim());
+      for (const line of lines) {
+        const parsed = JSON.parse(line);
+        if (parsed && parsed[0] && parsed[0][2]) {
+          const data = JSON.parse(parsed[0][2]);
+          if (data && data[0]) {
+            return data[0]; // Project ID
+          }
+        }
+      }
+    } catch (e) {
+      throw new Error(`Failed to parse project ID: ${e.message}`);
+    }
+    throw new Error("Project ID not found in response");
+  }
+
+  /**
    * Generate image using Whisk API
    * @param {string} prompt - Text prompt for image generation
-   * @param {object} credentials - Provider credentials with cookie or accessToken
+   * @param {object} credentials - Provider credentials
    * @param {string} aspectRatio - IMAGE_ASPECT_RATIO_SQUARE|LANDSCAPE|PORTRAIT
    * @param {number} seed - Random seed (0 for random)
    * @returns {Promise<object>} Image data with URL and base64
    */
   async generateImage(prompt, credentials, aspectRatio = "IMAGE_ASPECT_RATIO_LANDSCAPE", seed = 0) {
     try {
-      // Dynamically import whisk-api
-      const { Whisk } = await import("@rohitaryal/whisk-api");
-      
       // Get cookie - either from credentials or try to fetch with OAuth token
       let cookie = credentials.cookie;
       
@@ -51,30 +103,80 @@ export class WhiskExecutor extends BaseExecutor {
       if (!cookie) {
         throw new Error("No cookie available. Please re-authenticate or manually provide cookie.");
       }
-      
-      const whisk = new Whisk(cookie);
-      
-      // Create temporary project
-      const project = await whisk.newProject("9Router-Whisk-Project");
-      
-      // Generate image with specified parameters
-      const media = await project.generateImage({
-        prompt: prompt,
-        aspectRatio: aspectRatio,
-        seed: seed === 0 ? undefined : seed,
-        model: "IMAGEN_3_5"
+
+      // Update credentials with cookie for subsequent calls
+      const credsWithCookie = { ...credentials, cookie };
+
+      // 1. Create project
+      const projectId = await this.createProject(credsWithCookie, "9Router-Whisk-Project");
+
+      // 2. Generate image
+      const payload = [
+        [
+          ["GenerateImage", JSON.stringify([
+            projectId,
+            {
+              prompt: prompt,
+              aspectRatio: aspectRatio,
+              seed: seed === 0 ? null : seed,
+              model: "IMAGEN_3_5"
+            }
+          ]), null, "generic"]
+        ]
+      ];
+
+      const body = `f.req=${encodeURIComponent(JSON.stringify(payload))}`;
+
+      const response = await fetch(this.buildUrl(), {
+        method: "POST",
+        headers: this.buildHeaders(credsWithCookie),
+        body: body
       });
-      
-      // Return standardized response
+
+      if (!response.ok) {
+        throw new Error(`Image generation failed: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      const imageData = this.parseImageResponse(text);
+
       return {
-        mediaId: media.id,
-        imageUrl: media.url,
-        base64Data: media.base64 || null,
+        mediaId: imageData.mediaId,
+        imageUrl: imageData.imageUrl,
+        base64Data: imageData.base64Data || null,
         prompt: prompt
       };
     } catch (error) {
       throw new Error(`Whisk generation failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Parse image response from BatchExecute
+   * @param {string} responseText - Response text
+   * @returns {object} Image data
+   */
+  parseImageResponse(responseText) {
+    try {
+      const lines = responseText.split('\n').filter(line => line.trim());
+      for (const line of lines) {
+        const parsed = JSON.parse(line);
+        if (parsed && parsed[0] && parsed[0][2]) {
+          const data = JSON.parse(parsed[0][2]);
+          if (data && data[1] && data[1][0]) {
+            const imageData = data[1][0];
+            return {
+              mediaId: imageData[0] || null,
+              imageUrl: imageData[1] || null,
+              base64Data: imageData[2] || null
+            };
+          }
+        }
+      }
+    } catch (e) {
+      throw new Error(`Failed to parse image response: ${e.message}`);
+    }
+    throw new Error("Image data not found in response");
   }
 
   /**
@@ -117,8 +219,6 @@ export class WhiskExecutor extends BaseExecutor {
    */
   async refineImage(mediaId, prompt, credentials) {
     try {
-      const { Whisk } = await import("@rohitaryal/whisk-api");
-      
       let cookie = credentials.cookie;
       if (!cookie && credentials.accessToken) {
         cookie = await this.getCookieFromToken(credentials.accessToken);
@@ -127,20 +227,45 @@ export class WhiskExecutor extends BaseExecutor {
       if (!cookie) {
         throw new Error("No cookie available for image refinement");
       }
-      
-      const whisk = new Whisk(cookie);
-      const project = await whisk.newProject("9Router-Whisk-Refine");
-      
-      // Fetch the original media
-      const originalMedia = await whisk.fetchMedia(mediaId);
-      
+
+      const credsWithCookie = { ...credentials, cookie };
+
+      // Create project for refinement
+      const projectId = await this.createProject(credsWithCookie, "9Router-Whisk-Refine");
+
       // Refine the image
-      const refinedMedia = await originalMedia.refine(prompt);
-      
+      const payload = [
+        [
+          ["RefineImage", JSON.stringify([
+            projectId,
+            mediaId,
+            {
+              prompt: prompt,
+              model: "IMAGEN_3_5"
+            }
+          ]), null, "generic"]
+        ]
+      ];
+
+      const body = `f.req=${encodeURIComponent(JSON.stringify(payload))}`;
+
+      const response = await fetch(this.buildUrl(), {
+        method: "POST",
+        headers: this.buildHeaders(credsWithCookie),
+        body: body
+      });
+
+      if (!response.ok) {
+        throw new Error(`Image refinement failed: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      const imageData = this.parseImageResponse(text);
+
       return {
-        mediaId: refinedMedia.id,
-        imageUrl: refinedMedia.url,
-        base64Data: refinedMedia.base64 || null,
+        mediaId: imageData.mediaId,
+        imageUrl: imageData.imageUrl,
+        base64Data: imageData.base64Data || null,
         prompt: prompt
       };
     } catch (error) {
@@ -157,8 +282,6 @@ export class WhiskExecutor extends BaseExecutor {
    */
   async animateImage(mediaId, script, credentials) {
     try {
-      const { Whisk } = await import("@rohitaryal/whisk-api");
-      
       let cookie = credentials.cookie;
       if (!cookie && credentials.accessToken) {
         cookie = await this.getCookieFromToken(credentials.accessToken);
@@ -167,18 +290,44 @@ export class WhiskExecutor extends BaseExecutor {
       if (!cookie) {
         throw new Error("No cookie available for animation");
       }
-      
-      const whisk = new Whisk(cookie);
-      
-      // Fetch the original media
-      const originalMedia = await whisk.fetchMedia(mediaId);
-      
+
+      const credsWithCookie = { ...credentials, cookie };
+
+      // Create project for animation
+      const projectId = await this.createProject(credsWithCookie, "9Router-Whisk-Animation");
+
       // Animate to video
-      const video = await originalMedia.animate(script, "VEO_3_1_I2V_12STEP");
-      
+      const payload = [
+        [
+          ["AnimateImage", JSON.stringify([
+            projectId,
+            mediaId,
+            {
+              script: script,
+              model: "VEO_3_1_I2V_12STEP"
+            }
+          ]), null, "generic"]
+        ]
+      ];
+
+      const body = `f.req=${encodeURIComponent(JSON.stringify(payload))}`;
+
+      const response = await fetch(this.buildUrl(), {
+        method: "POST",
+        headers: this.buildHeaders(credsWithCookie),
+        body: body
+      });
+
+      if (!response.ok) {
+        throw new Error(`Animation failed: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      const videoData = this.parseImageResponse(text); // Same format
+
       return {
-        mediaId: video.id,
-        videoUrl: video.url,
+        mediaId: videoData.mediaId,
+        videoUrl: videoData.imageUrl, // URL field contains video URL
         prompt: script
       };
     } catch (error) {
