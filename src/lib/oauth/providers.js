@@ -17,6 +17,7 @@ import {
   KIMI_CODING_CONFIG,
   KILOCODE_CONFIG,
   CLINE_CONFIG,
+  WHISK_CONFIG,
   getOAuthClientMetadata,
 } from "./constants/oauth";
 
