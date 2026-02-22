@@ -5,6 +5,7 @@ import { IFlowExecutor } from "./iflow.js";
 import { KiroExecutor } from "./kiro.js";
 import { CodexExecutor } from "./codex.js";
 import { CursorExecutor } from "./cursor.js";
+import { WhiskExecutor } from "./whisk.js";
 import { DefaultExecutor } from "./default.js";
 
 const executors = {
@@ -15,7 +16,8 @@ const executors = {
   kiro: new KiroExecutor(),
   codex: new CodexExecutor(),
   cursor: new CursorExecutor(),
-  cu: new CursorExecutor() // Alias for cursor
+  cu: new CursorExecutor(), // Alias for cursor
+  whisk: new WhiskExecutor()
 };
 
 const defaultCache = new Map();
@@ -38,4 +40,5 @@ export { IFlowExecutor } from "./iflow.js";
 export { KiroExecutor } from "./kiro.js";
 export { CodexExecutor } from "./codex.js";
 export { CursorExecutor } from "./cursor.js";
+export { WhiskExecutor } from "./whisk.js";
 export { DefaultExecutor } from "./default.js";

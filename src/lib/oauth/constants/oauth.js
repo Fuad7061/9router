@@ -215,6 +215,36 @@ export const CLINE_CONFIG = {
   refreshUrl: "https://api.cline.bot/api/v1/auth/refresh",
 };
 
+// Whisk OAuth Configuration (Google OAuth with automatic cookie extraction)
+export const WHISK_CONFIG = {
+  clientId: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+  clientSecret: "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",
+  authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenUrl: "https://oauth2.googleapis.com/token",
+  userInfoUrl: "https://www.googleapis.com/oauth2/v1/userinfo",
+  scopes: [
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "openid"
+  ],
+  // Whisk-specific endpoints
+  apiEndpoint: "https://labs.google.com/_/VisualBlocksService/BatchExecute",
+  projectEndpoint: "https://labs.google.com/fx/tools/whisk/project",
+  whiskBaseUrl: "https://labs.google.com",
+  // Models
+  models: {
+    textToImage: "IMAGEN_3_5",
+    imageToVideo: "VEO_3_1",
+    imageToVideoFast: "VEO_3_1_I2V_12STEP"
+  },
+  // Aspect ratios
+  aspectRatios: {
+    square: "IMAGE_ASPECT_RATIO_SQUARE",
+    landscape: "IMAGE_ASPECT_RATIO_LANDSCAPE",
+    portrait: "IMAGE_ASPECT_RATIO_PORTRAIT"
+  }
+};
+
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
 
@@ -233,4 +263,5 @@ export const PROVIDERS = {
   KIMI_CODING: "kimi-coding",
   KILOCODE: "kilocode",
   CLINE: "cline",
+  WHISK: "whisk",
 };

@@ -277,6 +277,28 @@ export const PROVIDERS = {
     },
     tokenUrl: "https://api.cline.bot/api/v1/auth/token",
     refreshUrl: "https://api.cline.bot/api/v1/auth/refresh"
+  },
+  whisk: {
+    baseUrl: "https://labs.google.com/_/VisualBlocksService/BatchExecute",
+    format: "whisk",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Origin": "https://labs.google.com",
+      "Referer": "https://labs.google.com/fx/tools/whisk/project"
+    },
+    // OAuth configuration (uses Google OAuth like Gemini/Antigravity)
+    clientId: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+    clientSecret: "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",
+    models: {
+      "imagen-3.5": "IMAGEN_3_5",
+      "veo-3.1": "VEO_3_1"
+    },
+    aspectRatios: {
+      "square": "IMAGE_ASPECT_RATIO_SQUARE",
+      "landscape": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+      "portrait": "IMAGE_ASPECT_RATIO_PORTRAIT"
+    }
   }
 };
 

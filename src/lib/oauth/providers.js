@@ -833,6 +833,79 @@ const PROVIDERS = {
       providerSpecificData: { firstName: tokens.firstName, lastName: tokens.lastName },
     }),
   },
+
+  whisk: {
+    config: WHISK_CONFIG,
+    flowType: "authorization_code", // Google OAuth flow
+    buildAuthUrl: (config, redirectUri, state) => {
+      const params = new URLSearchParams({
+        client_id: config.clientId,
+        response_type: "code",
+        redirect_uri: redirectUri,
+        scope: config.scopes.join(" "),
+        state: state,
+        access_type: "offline",
+        prompt: "consent",
+      });
+      return `${config.authorizeUrl}?${params.toString()}`;
+    },
+    exchangeToken: async (config, code, redirectUri) => {
+      const response = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          client_id: config.clientId,
+          client_secret: config.clientSecret,
+          code: code,
+          redirect_uri: redirectUri,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Token exchange failed: ${error}`);
+      }
+
+      return await response.json();
+    },
+    postExchange: async (tokens) => {
+      // Fetch user info
+      const userInfoRes = await fetch(`${WHISK_CONFIG.userInfoUrl}?alt=json`, {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      });
+      const userInfo = userInfoRes.ok ? await userInfoRes.json() : {};
+
+      // Try to extract cookie from authenticated session
+      // This is a best-effort attempt - may not always work
+      let cookie = null;
+      try {
+        const whiskRes = await fetch(WHISK_CONFIG.whiskBaseUrl, {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+          redirect: "manual"
+        });
+        const setCookieHeaders = whiskRes.headers.get("set-cookie");
+        if (setCookieHeaders) {
+          cookie = setCookieHeaders;
+        }
+      } catch (e) {
+        console.log("Could not auto-extract Whisk cookie:", e.message);
+      }
+
+      return { userInfo, cookie };
+    },
+    mapTokens: (tokens, extra) => ({
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresIn: tokens.expires_in,
+      scope: tokens.scope,
+      email: extra?.userInfo?.email,
+      cookie: extra?.cookie, // Auto-extracted cookie (may be null)
+    }),
+  },
 };
 
 /**
