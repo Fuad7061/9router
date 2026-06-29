@@ -7,7 +7,7 @@ import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats } from "./requestDetail.js";
-import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { appendRequestLog, saveRequestDetail, trackPendingRequest } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 
 function parseToolArguments(value) {
@@ -196,6 +196,60 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 }
 
 /**
+ * Check if a response body has meaningful content.
+ * Returns true when the response is effectively empty (no text, no tool_calls, no reasoning).
+ * Used to detect 200-OK empty responses and trigger provider/model fallback.
+ */
+export function isEmptyResponse(responseBody) {
+  if (!responseBody) return true;
+
+  // OpenAI chat completion format (most common after translation)
+  const choice = responseBody.choices?.[0];
+  if (choice?.message) {
+    const msg = choice.message;
+    const hasContent = typeof msg.content === "string" && msg.content.length > 0;
+    const hasReasoning = typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0;
+    const hasToolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
+    return !hasContent && !hasReasoning && !hasToolCalls;
+  }
+
+  // Claude messages format (native passthrough)
+  if (responseBody.type === "message" && Array.isArray(responseBody.content)) {
+    if (responseBody.content.length === 0) return true;
+    return !responseBody.content.some(block => {
+      if (block.type === "text" && typeof block.text === "string" && block.text.length > 0) return true;
+      if (block.type === "tool_use") return true;
+      if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.length > 0) return true;
+      return false;
+    });
+  }
+
+  // Gemini / Antigravity format
+  const geminiResp = responseBody.response || responseBody;
+  if (geminiResp.candidates?.[0]?.content?.parts) {
+    return !geminiResp.candidates[0].content.parts.some(part => {
+      if (part.text) return true;
+      if (part.functionCall) return true;
+      return false;
+    });
+  }
+
+  // OpenAI Responses API format
+  if (responseBody.object === "response" && Array.isArray(responseBody.output)) {
+    const messages = responseBody.output.filter(item => item.type === "message");
+    if (messages.length === 0) return true;
+    return !messages.some(msg => {
+      const text = msg.content?.find?.(c => c.type === "output_text")?.text;
+      const funcCall = msg.content?.find?.(c => c.type === "function_call");
+      return (text && text.length > 0) || funcCall;
+    });
+  }
+
+  // Can't determine — assume valid (don't block false positives)
+  return false;
+}
+
+/**
  * Handle non-streaming response from provider.
  */
 export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog }) {
@@ -282,6 +336,26 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   }
 
   reqLogger.logConvertedResponse(translatedResponse);
+
+  // Detect empty/null response with 200 status — trigger fallback to another account/model
+  if (isEmptyResponse(translatedResponse)) {
+    const errMsg = `Empty response from ${provider} for ${model}`;
+    console.warn(`[ChatCore] ${errMsg} — treating as error for fallback`);
+    appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}`, tokens: { prompt_tokens: 0, completion_tokens: 0 } });
+    trackPendingRequest(model, provider, connectionId, false, true);
+    saveRequestDetail(buildRequestDetail({
+      provider, model, connectionId,
+      latency: { ttft: 0, total: Date.now() - requestStartTime },
+      tokens: { prompt_tokens: 0, completion_tokens: 0 },
+      request: extractRequestConfig(body, stream),
+      providerRequest: finalBody || translatedBody || null,
+      response: { error: errMsg, status: HTTP_STATUS.BAD_GATEWAY, thinking: null },
+      status: "error"
+    }, { endpoint: clientRawRequest?.endpoint || null })).catch(err => {
+      console.error("[RequestDetail] Failed to save:", err.message);
+    });
+    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+  }
 
   const totalLatency = Date.now() - requestStartTime;
   saveRequestDetail(buildRequestDetail({
