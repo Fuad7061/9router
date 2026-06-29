@@ -99,6 +99,10 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       ttft: ttftAt ? ttftAt - requestStartTime : Date.now() - requestStartTime,
       total: Date.now() - requestStartTime
     };
+    const isEmptyStream = !contentObj?.content || (typeof contentObj.content === "string" && contentObj.content.length === 0 && (!contentObj.thinking || contentObj.thinking.length === 0));
+    if (isEmptyStream) {
+      console.warn(`[ChatCore] Empty streaming response from ${provider} for ${model} — content already delivered to client, cannot fallback`);
+    }
     const safeContent = contentObj?.content || "[Empty streaming response]";
     const safeThinking = contentObj?.thinking || null;
 
