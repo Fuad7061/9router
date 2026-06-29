@@ -7,7 +7,8 @@ import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requ
 
 // Responses-API providers (e.g. codex) may emit SSE without content-type + use Responses output shape
 const isResponsesProvider = (p) => PROVIDERS[p]?.format === FORMATS.OPENAI_RESPONSES;
-import { saveRequestDetail, appendRequestLog } from "@/lib/usageDb.js";
+import { saveRequestDetail, appendRequestLog, trackPendingRequest } from "@/lib/usageDb.js";
+import { isEmptyResponse } from "./nonStreamingHandler.js";
 
 function textFromResponsesMessageItem(item) {
   if (!item?.content || !Array.isArray(item.content)) return "";
@@ -139,6 +140,12 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
       // Client is Responses API → return as-is
       if (sourceFormat === FORMATS.OPENAI_RESPONSES) {
+        if (isEmptyResponse(jsonResponse)) {
+          trackPendingRequest(model, provider, connectionId, false, true);
+          const errMsg = `Empty response from ${provider} for ${model} (Responses API)`;
+          console.warn(`[ChatCore] ${errMsg} — treating as error for fallback`);
+          return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+        }
         return { success: true, response: new Response(JSON.stringify(jsonResponse), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
       }
 
@@ -183,6 +190,14 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
         };
       }
 
+      // Detect empty response before returning success
+      if (isEmptyResponse(finalResp)) {
+        trackPendingRequest(model, provider, connectionId, false, true);
+        const errMsg = `Empty response from ${provider} for ${model} (Responses API SSE→JSON)`;
+        console.warn(`[ChatCore] ${errMsg} — treating as error for fallback`);
+        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+      }
+
       return { success: true, response: new Response(JSON.stringify(finalResp), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
     } catch (err) {
       console.error("[ChatCore] Responses API SSE→JSON failed:", err);
@@ -225,6 +240,14 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
           delete choice.message.reasoning_content;
         }
       }
+    }
+
+    // Detect empty response before returning success
+    if (isEmptyResponse(parsed)) {
+      trackPendingRequest(model, provider, connectionId, false, true);
+      const errMsg = `Empty response from ${provider} for ${model}`;
+      console.warn(`[ChatCore] ${errMsg} — treating as error for fallback`);
+      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
     }
 
     return { success: true, response: new Response(JSON.stringify(parsed), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
